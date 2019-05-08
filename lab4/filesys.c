@@ -52,18 +52,87 @@ unsigned char *startp; //v d data area start position
 
 FILE *file; // = fopen("/home/hondor/Desktop/filesys1.txt", "w");
 
+fcb *getfcbposition(fcb *fcbcursor, int *dirno, int *diroff, char *filename);
+fcb *getfcb(int fd);
+char * makedirpath(char *dirname, char *filename);
+char *gettime();
+int nextblkno(int blkno);
+int addblk(int blkno);
+void my_format();
+void startsys();
+int do_read(int fd, int len, char *text);
+int do_write(int fd, char *text, int len, char wstyle);
+void my_mkdir(char *dirname);
+void my_exitsys();
+int my_open(char *filename);
+int my_close(int fd);
+void my_cd(char *dirname);
+void my_ls();
+void my_rmdir(char *dirname);
+
+int main()
+{
+    startsys();
+
+    char order[20], filename[20], dirname[20];
+
+    printf("%s> ", openfilelist[curdir].dir);
+
+    while(1)
+    {
+    	scanf("%s", order);
+    	if(strcmp(order, "ls") == 0) my_ls();
+    	else if(strcmp(order, "cd") == 0)
+    	{
+    		scanf("%s", dirname);
+    		my_cd(dirname);
+    	}
+    	else if(strcmp(order, "mkdir") == 0)
+    	{
+    		scanf("%s", dirname);
+    		my_mkdir(dirname);
+    	}
+    	else if(strcmp(order, "rmdir") == 0)
+    	{
+    		scanf("%s", dirname);
+    		my_rmdir(dirname);
+    	}
+    	else if(strcmp(order, "exit") == 0)
+    	{
+    		my_exitsys();
+    	}
+    	else 
+    	{
+    		printf("command not found.\n");
+    	}
+    	printf("%s> ", openfilelist[curdir].dir);
+    }
+    //my_exitsys();
+
+    return 0;
+}
+
 fcb *getfcbposition(fcb *fcbcursor, int *dirno, int *diroff, char *filename)
 {
 	*dirno =  fcbcursor->first, *diroff = 1;
-	int plen = *dirno, i;
-	for(i = 1; i <= plen; i++, fcbcursor++, (*diroff)++)
+	//printf("%d\n", fcbcursor->length);
+	fcbcursor = (fcb *)(myvhead + BLOCKSIZE*(fcbcursor->first-1));
+	int plen = fcbcursor->length, i;
+	if(plen <= 3)
+	{
+		return NULL;
+		printf("no such file\n");
+	}
+
+	fcbcursor += 3;
+	for(i = 4; i <= plen; i++, fcbcursor++, (*diroff)++)
 	{
 		if(strcmp(fcbcursor->filename, filename) == 0)
 			break;
 		else if(i == plen)
 		{
 			printf("no such file.\n");
-			return -1;
+			return NULL;
 		}
 
 		if(i%16 == 0)
@@ -74,7 +143,7 @@ fcb *getfcbposition(fcb *fcbcursor, int *dirno, int *diroff, char *filename)
 		}
 	}
 
-	return fcbcursor;
+	return (fcb *)(myvhead + BLOCKSIZE*(fcbcursor->first-1));
 }
 
 fcb *getfcb(int fd)
@@ -84,8 +153,10 @@ fcb *getfcb(int fd)
 
 char * makedirpath(char *dirname, char *filename)
 {
-	strcat(dirname, "/");
-	strcat(dirname, filename);
+	char buf[30];
+	strcpy(buf, dirname);
+	strcat(buf, "/");
+	strcat(buf, filename);
 }
 
 char *gettime()
@@ -102,7 +173,7 @@ int nextblkno(int blkno)
 }
 
 //blkno is the block which need a free block to add behind
-int addfreeblock(int blkno)
+int addblk(int blkno)
 {
 	fat *fat1 = (fat *)(myvhead + BLOCKSIZE), *fat2 = (fat *)(myvhead + 3*BLOCKSIZE);
 
@@ -124,6 +195,16 @@ int addfreeblock(int blkno)
 	}
 
 	return -1;
+}
+
+int freeblk(int blkno)
+{
+	fat *fat1 = (fat *)(myvhead + BLOCKSIZE) + (blkno-1), *fat2 = (fat *)(myvhead + 3*BLOCKSIZE) + (blkno-1);
+	
+	fat1->id = END;
+	fat2->id = END;
+
+	return 1;
 }
 
 void my_format()
@@ -165,7 +246,7 @@ void my_format()
 	memcpy(startp+sizeof(fcb), onep, sizeof(fcb));
 	memcpy(startp+2*sizeof(fcb), twop, sizeof(fcb));
 	fcbroot->length += 2;
-	printf("%d\n", fcbroot->length);
+	printf("%d\n", (int)fcbroot->length);
 	memcpy(startp, fcbroot, sizeof(fcb));
 
 	memcpy(fat1, fat_init, 1000*sizeof(fat));
@@ -288,7 +369,7 @@ int do_write(int fd, char *text, int len, char wstyle)
 	{
 		if(blockpos->id == END)
 		{
-			if((blocknum = addfreeblock(blockpos-fat1+1)) == -1)
+			if((blocknum = addblk(blockpos-fat1+1)) == -1)
 			{
 				printf("In do_write: no more block to allocate.\n");
 				return -1;
@@ -331,7 +412,7 @@ int do_write(int fd, char *text, int len, char wstyle)
 		openfilelist[fd].count += tmplen;
 		if(len > 0 && blockpos->id == END)
 		{
-			if((blocknum = addfreeblock(blockpos-fat1+1)) == -1)
+			if((blocknum = addblk(blockpos-fat1+1)) == -1)
 			{
 				printf("In do_write: no more block to allocate.\n");
 				return -1;
@@ -387,8 +468,9 @@ void my_mkdir(char *dirname)
 			return;
 		}
 	}
+	//printf("newdir:%d\n", newdir);
 
-	if((temp = addfreeblock(0)) == -1)
+	if((temp = addblk(0)) == -1)
 	{
 		printf("In my_mkdir(): no more block to allocate.\n");
 		openfilelist[newdir].topenfile = 0;
@@ -408,7 +490,7 @@ void my_mkdir(char *dirname)
 			diroff = 0;
 			blkno = nextblkno(blkno);
 			if(blkno == END)
-				blkno = addfreeblock(blkno);
+				blkno = addblk(blkno);
 			fcbcursor = (fcb *)(myvhead + (blkno-1)*BLOCKSIZE);
 		}
 
@@ -448,12 +530,16 @@ void my_mkdir(char *dirname)
 	memcpy(fcbcursor, twop, sizeof(fcb));
 
 	free(onep); free(twop); free(fcbnew); free(fcbs);
-	fcbcursor = (fcb *)startp;
-	fcbcursor->length++;
 
+
+	if(openfilelist[curdir].fcbstate == 1)
+	{
+		openfilelist[curdir].count = 0;
+		assert(do_write(curdir, (char *)(&openfilelist[curdir].ffcb), sizeof(fcb), 2) == sizeof(fcb));
+		fcbcursor = (fcb *)(myvhead+(openfilelist[curdir].ffcb.first-1)*BLOCKSIZE);
+	}
 
 	my_close(newdir);
-
 }
 
 void my_exitsys()
@@ -468,26 +554,6 @@ int my_open(char *filename)
 {
 	int i, plen = openfilelist[curdir].ffcb.length;
 
-	if(strcmp(filename, ".") == 0) return curdir;
-	if(strcmp(filename, "..") == 0) 
-	{
-		if(openfilelist[curdir].ffcb.first == 6) return 1;
-    	else 
-    	{
-    		fcb *twop = getfcb(curdir) + 2;
-    		my_close(curdir);
-    		openfilelist[curdir].ffcb = *((fcb *)(myvhead + (twop->first-1)*BLOCKSIZE));
-    		twop = getfcb(curdir) + 2;
-    		getfcbposition((fcb *)(myvhead + (twop->first-1)*BLOCKSIZE), &openfilelist[curdir].dirno, &openfilelist[curdir].diroff, openfilelist[curdir].ffcb.filename);
-    		openfilelist[curdir].count =0;
-    		openfilelist[curdir].fcbstate = 0;
-    		i = strlen(openfilelist[curdir].dir);
-    		while(openfilelist[curdir].dir[i] != '/') i--;
-    		openfilelist[curdir].dir[i] = 0;
-    		return curdir;
-    	}
-	}
-
 	for(i = 0;i < MAXOPENFILE; i++)
 	{
 		if(openfilelist[i].topenfile == 1 && strcmp(filename, openfilelist[i].ffcb.filename) == 0)
@@ -498,6 +564,8 @@ int my_open(char *filename)
 
 	int dirno, diroff;
 	fcb *fcbcursor = getfcbposition(&(openfilelist[curdir].ffcb), &dirno, &diroff, filename);
+
+	if(fcbcursor == NULL) return -1;
 
 	int fd = -1;
 	for(i =0; i < MAXOPENFILE; i++)
@@ -514,6 +582,8 @@ int my_open(char *filename)
 		}
 	}
 
+
+	openfilelist[fd].topenfile = 1;
 	openfilelist[fd].count = 0;
 	openfilelist[fd].fcbstate = 0;
 	openfilelist[fd].dirno = dirno;
@@ -527,6 +597,7 @@ int my_open(char *filename)
 int my_close(int fd)
 {
 	//if(curdir == fd)
+	if(fd == 0) return 0;
 
 	if(fd >= MAXOPENFILE)
 	{
@@ -541,42 +612,62 @@ int my_close(int fd)
 	}
 
 	openfilelist[fd].topenfile = 0;
+
 	return fd;
 }
 
 void my_cd(char *dirname)
 {
+    if(strcmp(dirname, "/root") == 0 || strcmp(dirname, "root") == 0)
+    {
+    	my_close(curdir);
+    	curdir = 0;
+    	return;
+    }
+
     int newdir = my_open(dirname);
-    if(newdir != curdir) my_close(curdir);
+
+    if(newdir == -1) 
+    {
+    	printf("no such directory.\n");
+    	return;
+    }
+    my_close(curdir);
     curdir = newdir;
+
 }
 
 
 void my_ls()
 {
-	int i, len = openfilelist[curdir].ffcb.length;
-	char *fcbs = (char *)malloc(len*sizeof(fcb));
-    do_read(curdir, len*sizeof(fcb), fcbs);
+	int i, len = openfilelist[curdir].ffcb.length-3;
 
-	fcb *fcbcursor = (fcb *)fcbs;
-	fcbs++;
-	for(i = 1; i <= len; i++, fcbcursor++)
+	fcb *fcbcursor = getfcb(curdir) + 3;
+	while(len > 0)
 	{
-		if(strcmp(fcbcursor->filename, ".") == 0 || strcmp(fcbcursor->filename, "..") == 0 || strcmp(fcbcursor->filename, openfilelist[curdir].ffcb.filename) == 0)
-			continue;
-		printf("%s\n", fcbcursor->filename);
+		if(fcbcursor->free == 0) fcbcursor++;
+		else 
+		{
+			printf("%s   ", fcbcursor->filename);
+			len--;
+			fcbcursor++;
+		}
 	}
+	printf("\n");
 }
 
 void my_rmdir(char *dirname)
 {
 	int i, plen = openfilelist[curdir].ffcb.length;
 	char *fcbs = (char *)malloc(sizeof(fcb)*plen);
+
+	openfilelist[curdir].count = 0;
 	assert(do_read(curdir, plen*sizeof(fcb), fcbs) == plen*sizeof(fcb));
+
 	fcb *fcbcursor = (fcb *)fcbs;
 	for(i = 1; i <= plen; i++, fcbcursor++)
 	{
-		if(fcbcursor->attribute == 0 && strcmp(fcbcursor->filename, dirname) == 0)
+		if(fcbcursor->free == 1 && fcbcursor->attribute == 0 && strcmp(fcbcursor->filename, dirname) == 0)
 			break;
 		else if(i == plen)
 		{
@@ -585,7 +676,8 @@ void my_rmdir(char *dirname)
 		}
 	}
 
-	if(fcbcursor->length > 3)
+	fcb *rfcb = (fcb *)(myvhead + BLOCKSIZE*(fcbcursor->first-1));
+	if(rfcb->length > 3)
 	{
 		printf("this directory is not empty.\n");
 		return;
@@ -600,81 +692,15 @@ void my_rmdir(char *dirname)
 		}
 	}
 
+	freeblk(rfcb->first);
+
 	fcbcursor->free = 0;
+
+	openfilelist[curdir].count = 0;
 	assert(do_write(curdir, fcbs, plen*sizeof(fcb), 2) == plen*sizeof(fcb));
 
-	openfilelist[curdir].ffcb.length++;
+	openfilelist[curdir].ffcb.length--;
 	openfilelist[curdir].fcbstate = 1;
 
 }
 
-/*fcb *searchdir(char *dirname)
-{
-	fcb *fcbcursor = getfcb(curdir) + 3;
-	int i, len = fcbcursor->length;
-	char *filename;
-	strcpy(filename, dirname);
-	i = 0;
-	if(dirname++)
-	while(1)
-	{
-		if(dirname[i] == '/')
-		{
-			filename[i] == 0;
-			dirname++;
-			break;
-		}
-		dirname++;
-		i++;
-	}
-
-	for(i = 4; i <= length; i++, fcbcursor++)
-	{
-		if(fcbcursor->attribute == 0 && strcmp(fcbcursor->filename, filename))
-			break;
-		else if(i == length)
-		{
-			printf("no such directory.\n");
-			return 0;
-		}
-	}
-}*/
-
-int main()
-{
-    startsys();
-
-    char order[20], filename[20], dirname[20];
-
-    printf("%s> ", openfilelist[curdir].dir);
-
-    while(1)
-    {
-    	scanf("%s", order);
-    	if(strcmp(order, "ls") == 0) my_ls();
-    	else if(strcmp(order, "cd") == 0)
-    	{
-    		scanf("%s", dirname);
-    		my_cd(dirname);
-    	}
-    	else if(strcmp(order, "mkdir") == 0)
-    	{
-    		scanf("%s", dirname);
-    		my_mkdir(dirname);
-    	}
-    	else if(strcmp(order, "rmdir") == 0)
-    	{
-    		scanf("%s", dirname);
-    		my_rmdir(dirname);
-    	}
-    	else if(strcmp(order, "exit") == 0)
-    	{
-    		my_exitsys();
-    	}
-
-    	printf("%s> ", openfilelist[curdir].dir);
-    }
-    //my_exitsys();
-
-    return 0;
-}
